@@ -1,0 +1,89 @@
+version: "3.5"
+
+networks:
+  default:
+    driver: bridge
+    name: rinha-nginx-2024q1
+
+services:
+  db:
+    image: postgres:latest
+    hostname: db
+    environment:
+      - POSTGRES_PASSWORD=123
+      - POSTGRES_USER=admin
+      - POSTGRES_DB=rinha
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./script.sql:/docker-entrypoint-initdb.d/script.sql
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: "100MB"
+
+  api01: &api
+    build:
+      context: .
+      dockerfile: Dockerfile # Assegure-se de que este Dockerfile é para Node.js
+    hostname: api01
+    environment:
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_NAME=rinha
+      - DB_USER=admin
+      - DB_PASSWORD=123
+      - APP_PORT=8000 # Supondo que a aplicação Node.js use a porta 3000
+      - APP_HOST=0.0.0.0
+      - PRODUCTION=true
+    ports:
+      - "8081:8000" # Mapeie para a porta correta da sua aplicação Node.js
+    depends_on:
+      - db
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: "200MB"
+    networks:
+      - default
+
+  api02:
+    <<: *api
+    hostname: api02
+    ports:
+      - "8082:8000" # Ajuste conforme a porta da aplicação
+
+  nginx:
+    image: nginx:latest
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - api01
+      - api02
+    ports:
+      - "9999:9999"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: "250MB"
+    networks:
+      - default
+  # haproxy:
+  #   image: haproxy:latest
+  #   volumes:
+  #     - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+  #   depends_on:
+  #     - api01
+  #     - api02
+  #   ports:
+  #     - "9999:9999"
+  #   networks:
+  #     - default
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         cpus: "0.25"
+  #         memory: "50MB"
