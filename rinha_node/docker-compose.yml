@@ -20,13 +20,15 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.25"
-          memory: "100MB"
+          cpus: "0.50"
+          memory: "150MB"
+    entrypoint: >
+      bash -c "docker-entrypoint.sh postgres"
 
   api01: &api
     build:
       context: .
-      dockerfile: Dockerfile # Assegure-se de que este Dockerfile é para Node.js
+      dockerfile: Dockerfile
     hostname: api01
     environment:
       - DB_HOST=db
@@ -34,18 +36,18 @@ services:
       - DB_NAME=rinha
       - DB_USER=admin
       - DB_PASSWORD=123
-      - APP_PORT=8000 # Supondo que a aplicação Node.js use a porta 3000
+      - APP_PORT=8000 
       - APP_HOST=0.0.0.0
       - PRODUCTION=true
     ports:
-      - "8081:8000" # Mapeie para a porta correta da sua aplicação Node.js
+      - "8081:8000"
     depends_on:
       - db
     deploy:
       resources:
         limits:
-          cpus: "0.5"
-          memory: "200MB"
+          cpus: "0.45"
+          memory: "150MB"
     networks:
       - default
 
@@ -53,7 +55,7 @@ services:
     <<: *api
     hostname: api02
     ports:
-      - "8082:8000" # Ajuste conforme a porta da aplicação
+      - "8082:8000" 
 
   nginx:
     image: nginx:latest
@@ -67,23 +69,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.25"
-          memory: "250MB"
+          cpus: "0.10"
+          memory: "100MB"
     networks:
       - default
-  # haproxy:
-  #   image: haproxy:latest
-  #   volumes:
-  #     - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
-  #   depends_on:
-  #     - api01
-  #     - api02
-  #   ports:
-  #     - "9999:9999"
-  #   networks:
-  #     - default
-  #   deploy:
-  #     resources:
-  #       limits:
-  #         cpus: "0.25"
-  #         memory: "50MB"

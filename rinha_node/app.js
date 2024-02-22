@@ -1,9 +1,9 @@
-import compression from "compression";
+import formBody from "@fastify/formbody";
 import dotenv from "dotenv";
-import express from "express";
-import { check, validationResult } from "express-validator";
+import Fastify from "fastify";
 import pkg from "pg";
 const { Pool } = pkg;
+
 dotenv.config({ path: ".env" });
 
 const pool = new Pool({
@@ -14,121 +14,153 @@ const pool = new Pool({
   port: process.env.DB_PORT,
 });
 
-const app = express();
-app.use(express.json());
-app.use(compression());
+const app = Fastify({
+  logger: false,
+});
 
-app.post(
-  "/clientes/:client_id/transacoes",
-  [
-    check("client_id").isNumeric(),
-    check("valor").isInt({ min: 0, gt: 0 }),
-    check("tipo").isIn(["c", "d"]),
-    check("descricao").isString().isLength({ min: 1, max: 10 }),
-  ],
-  async (req, res, next) => {
-    let client;
-    try {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return res.status(422).json({ errors: errors.array() });
-      }
+app.register(formBody);
 
-      const client_id = req.params.client_id;
-      const { valor, tipo, descricao } = req.body;
+app.post("/clientes/:client_id/transacoes", async (request, reply) => {
+  const client = await pool.connect();
 
-      client = await pool.connect();
-
-      const userQuery = `SELECT saldo, limite FROM clientes WHERE id = $1`;
-      const userResult = await client.query(userQuery, [client_id]);
-
-      console.log(userResult.rows.length);
-
-      if (userResult.rows.length === 0) {
-        return res.status(404).json({ error: "Cliente não encontrado" });
-      }
-
-      let { saldo, limite } = userResult.rows[0];
-      const cents = valor;
-
-      if (tipo === "d" && saldo - cents < -limite) {
-        return res.status(422).json({ error: "Saldo insuficiente" });
-      }
-
-      saldo += tipo === "d" ? -cents : cents;
-
-      await client.query("BEGIN");
-      const updateQuery = `UPDATE clientes SET saldo = $1 WHERE id = $2`;
-      await client.query(updateQuery, [saldo, client_id]);
-
-      const date_to_string = new Date().toISOString();
-      const insertQuery = `INSERT INTO transacoes (valor, tipo, descricao, realizado_em, cliente_id) VALUES ($1, $2, $3, $4, $5)`;
-      await client.query(insertQuery, [
-        cents,
-        tipo,
-        descricao,
-        date_to_string,
-        client_id,
-      ]);
-
-      await client.query("COMMIT");
-      res.json({ limite, saldo });
-    } catch (error) {
-      console.log(error);
-      if (client) {
-        await client.query("ROLLBACK");
-      }
-    } finally {
-      if (client) client.release();
+  try {
+    const client_id = request.params.client_id;
+    const { valor, tipo, descricao } = request.body;
+    if (!Number.isInteger(valor) || valor < 0) {
+      return reply
+        .type("application/json")
+        .code(422)
+        .send({ error: "Valor inválido" });
     }
-  }
-);
 
-app.get(
-  "/clientes/:client_id/extrato",
-  [check("client_id").isNumeric()],
-  async (req, res) => {
-    const client_id = req.params.client_id;
-
-    try {
-      const clientQuery = `SELECT saldo, limite FROM clientes WHERE id = $1;`;
-      const clientResult = await pool.query(clientQuery, [client_id]);
-
-      if (clientResult.rows.length === 0) {
-        return res.status(404).json({ detail: "Cliente não encontrado" });
-      }
-
-      const { saldo, limite } = clientResult.rows[0];
-
-      const transacoesQuery = `SELECT valor, tipo, descricao, realizado_em FROM transacoes WHERE cliente_id = $1 ORDER BY realizado_em DESC LIMIT 10;`;
-      const transacoesResult = await pool.query(transacoesQuery, [client_id]);
-
-      const ultimasTransacoes = transacoesResult.rows.map((t) => ({
-        valor: t.valor,
-        tipo: t.tipo,
-        descricao: t.descricao,
-        realizada_em: t.realizado_em,
-      }));
-
-      const resultado = {
-        saldo: {
-          total: saldo,
-          data_extrato: new Date().toISOString(),
-          limite: limite,
-        },
-        ultimas_transacoes: ultimasTransacoes,
-      };
-
-      res.json(resultado);
-    } catch (error) {
-      console.log(error);
-      res.status(500).json({ detail: "Internal Server Error" });
+    if (tipo !== "d" && tipo !== "c") {
+      return reply
+        .type("application/json")
+        .code(422)
+        .send({ error: "Tipo inválido" });
     }
+
+    if (
+      !descricao ||
+      typeof descricao !== "string" ||
+      descricao.trim().length < 1 ||
+      descricao.trim().length > 10
+    ) {
+      return reply
+        .type("application/json")
+        .code(422)
+        .send({ error: "Descrição inválida" });
+    }
+
+    // await client.query("BEGIN");
+    const userQuery = `SELECT saldo, limite FROM clientes WHERE id = $1`;
+    const userResult = await client.query(userQuery, [client_id]);
+
+    if (userResult.rows.length === 0) {
+      // await client.query("ROLLBACK");
+      return reply
+        .type("application/json")
+        .code(404)
+        .send({ error: "Cliente não encontrado" });
+    }
+
+    let { saldo, limite } = userResult.rows[0];
+
+    if (tipo === "d") {
+      const debitValue = valor * -1;
+      if (saldo + debitValue < limite) {
+        // await client.query("ROLLBACK");
+        return reply
+          .type("application/json")
+          .code(422)
+          .send({ error: "Saldo insuficiente" });
+      } else {
+        saldo += debitValue;
+      }
+    }
+
+    if (tipo === "c") {
+      saldo += valor;
+    }
+
+    await client.query("BEGIN");
+    const updateQuery = `UPDATE clientes SET saldo = $1 WHERE id = $2`;
+    await client.query(updateQuery, [saldo, client_id]);
+
+    const date_to_string = new Date().toISOString();
+    const insertQuery = `INSERT INTO transacoes (valor, tipo, descricao, realizado_em, cliente_id) VALUES ($1, $2, $3, $4, $5)`;
+    await client.query(insertQuery, [
+      valor,
+      tipo,
+      descricao,
+      date_to_string,
+      client_id,
+    ]);
+
+    await client.query("COMMIT");
+    return reply.type("application/json").code(200).send({ limite, saldo });
+  } catch (error) {
+    // console.log(error);
+    await client.query("ROLLBACK");
+    // process.exit(1);
+    return reply
+      .type("application/json")
+      .code(500)
+      .send({ error: "Internal Server Error" });
+  } finally {
+    client.release();
   }
-);
+});
+
+app.get("/clientes/:client_id/extrato", async (request, reply) => {
+  const client_id = request.params.client_id;
+  // const client = await pool.connect();
+  try {
+    const clientQuery = `SELECT saldo, limite FROM clientes WHERE id = $1;`;
+    const clientResult = await pool.query(clientQuery, [client_id]);
+
+    if (clientResult.rows.length === 0) {
+      // await client.query("ROLLBACK");
+      return reply.code(404).send({ detail: "Cliente não encontrado" });
+    }
+
+    const { saldo, limite } = clientResult.rows[0];
+
+    const transacoesQuery = `SELECT valor, tipo, descricao, realizado_em FROM transacoes WHERE cliente_id = $1 ORDER BY realizado_em DESC LIMIT 10;`;
+    const transacoesResult = await pool.query(transacoesQuery, [client_id]);
+
+    const ultimasTransacoes = transacoesResult.rows.map((t) => ({
+      valor: t.valor,
+      tipo: t.tipo,
+      descricao: t.descricao,
+      realizada_em: t.realizado_em,
+    }));
+
+    const resultado = {
+      saldo: {
+        total: saldo,
+        data_extrato: new Date().toISOString(),
+        limite: limite,
+      },
+      ultimas_transacoes: ultimasTransacoes,
+    };
+
+    return reply.send(resultado);
+  } catch (error) {
+    // await client.query("ROLLBACK");
+    return reply.code(500).send({ detail: "Internal Server Error" });
+  } finally {
+    client.release();
+  }
+});
 
 const port = process.env.APP_PORT || 3000;
-app.listen(port, () => {
+const appHost = process.env.APP_HOST || "localhost";
+
+app.listen({ port: port, host: appHost }, (err) => {
+  if (err) {
+    console.log(err);
+    process.exit(1);
+  }
   console.log(`Server running on port ${port}`);
 });
-// }
