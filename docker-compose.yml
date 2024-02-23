@@ -25,7 +25,7 @@ services:
           # de memória. A distribuição feita aqui é apenas
           # um exemplo – distribua como quiser.
           cpus: "0.25"
-          memory: "160MB"
+          memory: "580MB"
 
   api01: &api
     image: victoraf/codigorinha2024:0.0.8
@@ -51,7 +51,7 @@ services:
       resources:
         limits:
           cpus: "0.5"
-          memory: "180MB"
+          memory: "560MB"
     networks:
       - default
 
@@ -76,6 +76,23 @@ services:
       resources:
         limits:
           cpus: "0.25"
-          memory: "30MB"
+          memory: "250MB"
     networks:
       - default
+
+  # haproxy:
+  #   image: haproxy:latest
+  #   volumes:
+  #     - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+  #   depends_on:
+  #     - api01
+  #     - api02
+  #   ports:
+  #     - "9999:9999"
+  #   networks:
+  #     - default
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         cpus: "0.25"
+  #         memory: "250MB"

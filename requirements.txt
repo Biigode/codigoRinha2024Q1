@@ -3,4 +3,6 @@ uvicorn[standard]
 gunicorn
 # psycopg2-binary
 python-dotenv
-asyncpg
+# asyncpg
+psycopg
+psycopg-binary

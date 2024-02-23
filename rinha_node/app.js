@@ -6,6 +6,13 @@ const { Pool } = pkg;
 
 dotenv.config({ path: ".env" });
 
+const app = Fastify({
+  logger: false,
+});
+// await app.register(import("@fastify/compress"), { global: false });
+
+app.register(formBody);
+
 const pool = new Pool({
   user: process.env.DB_USER,
   host: process.env.DB_HOST,
@@ -14,15 +21,8 @@ const pool = new Pool({
   port: process.env.DB_PORT,
 });
 
-const app = Fastify({
-  logger: false,
-});
-
-app.register(formBody);
-
 app.post("/clientes/:client_id/transacoes", async (request, reply) => {
-  const client = await pool.connect();
-
+  let client;
   try {
     const client_id = request.params.client_id;
     const { valor, tipo, descricao } = request.body;
@@ -51,13 +51,13 @@ app.post("/clientes/:client_id/transacoes", async (request, reply) => {
         .code(422)
         .send({ error: "Descrição inválida" });
     }
-
-    // await client.query("BEGIN");
+    client = await pool.connect();
+    await client.query("BEGIN");
     const userQuery = `SELECT saldo, limite FROM clientes WHERE id = $1`;
     const userResult = await client.query(userQuery, [client_id]);
 
     if (userResult.rows.length === 0) {
-      // await client.query("ROLLBACK");
+      await client.query("ROLLBACK");
       return reply
         .type("application/json")
         .code(404)
@@ -67,15 +67,15 @@ app.post("/clientes/:client_id/transacoes", async (request, reply) => {
     let { saldo, limite } = userResult.rows[0];
 
     if (tipo === "d") {
-      const debitValue = valor * -1;
-      if (saldo + debitValue < limite) {
-        // await client.query("ROLLBACK");
+      const debitValue = valor;
+      if (saldo - debitValue < -limite) {
+        await client.query("ROLLBACK");
         return reply
           .type("application/json")
           .code(422)
           .send({ error: "Saldo insuficiente" });
       } else {
-        saldo += debitValue;
+        saldo -= debitValue;
       }
     }
 
@@ -83,7 +83,6 @@ app.post("/clientes/:client_id/transacoes", async (request, reply) => {
       saldo += valor;
     }
 
-    await client.query("BEGIN");
     const updateQuery = `UPDATE clientes SET saldo = $1 WHERE id = $2`;
     await client.query(updateQuery, [saldo, client_id]);
 
@@ -100,9 +99,7 @@ app.post("/clientes/:client_id/transacoes", async (request, reply) => {
     await client.query("COMMIT");
     return reply.type("application/json").code(200).send({ limite, saldo });
   } catch (error) {
-    // console.log(error);
     await client.query("ROLLBACK");
-    // process.exit(1);
     return reply
       .type("application/json")
       .code(500)
@@ -114,13 +111,11 @@ app.post("/clientes/:client_id/transacoes", async (request, reply) => {
 
 app.get("/clientes/:client_id/extrato", async (request, reply) => {
   const client_id = request.params.client_id;
-  // const client = await pool.connect();
   try {
     const clientQuery = `SELECT saldo, limite FROM clientes WHERE id = $1;`;
     const clientResult = await pool.query(clientQuery, [client_id]);
 
     if (clientResult.rows.length === 0) {
-      // await client.query("ROLLBACK");
       return reply.code(404).send({ detail: "Cliente não encontrado" });
     }
 
@@ -147,10 +142,8 @@ app.get("/clientes/:client_id/extrato", async (request, reply) => {
 
     return reply.send(resultado);
   } catch (error) {
-    // await client.query("ROLLBACK");
     return reply.code(500).send({ detail: "Internal Server Error" });
   } finally {
-    client.release();
   }
 });
 
