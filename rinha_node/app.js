@@ -9,7 +9,6 @@ dotenv.config({ path: ".env" });
 const app = Fastify({
   logger: false,
 });
-// await app.register(import("@fastify/compress"), { global: false });
 
 app.register(formBody);
 
@@ -52,12 +51,13 @@ app.post("/clientes/:client_id/transacoes", async (request, reply) => {
         .send({ error: "Descrição inválida" });
     }
     client = await pool.connect();
-    await client.query("BEGIN");
-    const userQuery = `SELECT saldo, limite FROM clientes WHERE id = $1`;
+    await client.query("BEGIN;");
+    // await client.query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED;");
+    const userQuery = `SELECT saldo, limite FROM clientes WHERE id = $1 FOR UPDATE;`;
     const userResult = await client.query(userQuery, [client_id]);
 
     if (userResult.rows.length === 0) {
-      await client.query("ROLLBACK");
+      await client.query("ROLLBACK;");
       return reply
         .type("application/json")
         .code(404)
@@ -69,7 +69,7 @@ app.post("/clientes/:client_id/transacoes", async (request, reply) => {
     if (tipo === "d") {
       const debitValue = valor;
       if (saldo - debitValue < -limite) {
-        await client.query("ROLLBACK");
+        await client.query("ROLLBACK;");
         return reply
           .type("application/json")
           .code(422)
@@ -83,11 +83,11 @@ app.post("/clientes/:client_id/transacoes", async (request, reply) => {
       saldo += valor;
     }
 
-    const updateQuery = `UPDATE clientes SET saldo = $1 WHERE id = $2`;
+    const updateQuery = `UPDATE clientes SET saldo = $1 WHERE id = $2;`;
     await client.query(updateQuery, [saldo, client_id]);
 
     const date_to_string = new Date().toISOString();
-    const insertQuery = `INSERT INTO transacoes (valor, tipo, descricao, realizado_em, cliente_id) VALUES ($1, $2, $3, $4, $5)`;
+    const insertQuery = `INSERT INTO transacoes (valor, tipo, descricao, realizado_em, cliente_id) VALUES ($1, $2, $3, $4, $5);`;
     await client.query(insertQuery, [
       valor,
       tipo,
@@ -96,10 +96,10 @@ app.post("/clientes/:client_id/transacoes", async (request, reply) => {
       client_id,
     ]);
 
-    await client.query("COMMIT");
+    await client.query("COMMIT;");
     return reply.type("application/json").code(200).send({ limite, saldo });
   } catch (error) {
-    await client.query("ROLLBACK");
+    await client.query("ROLLBACK;");
     return reply
       .type("application/json")
       .code(500)
@@ -111,18 +111,24 @@ app.post("/clientes/:client_id/transacoes", async (request, reply) => {
 
 app.get("/clientes/:client_id/extrato", async (request, reply) => {
   const client_id = request.params.client_id;
+  let client;
   try {
-    const clientQuery = `SELECT saldo, limite FROM clientes WHERE id = $1;`;
-    const clientResult = await pool.query(clientQuery, [client_id]);
+    client = await pool.connect();
+    // await client.query("BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;");
+    // await client.query("BEGIN;");
+    // await client.query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED;");
+    const clientQuery = `SELECT saldo, limite FROM clientes WHERE id = $1 FOR UPDATE;`;
+    const clientResult = await client.query(clientQuery, [client_id]);
 
     if (clientResult.rows.length === 0) {
+      // await client.query("ROLLBACK");
       return reply.code(404).send({ detail: "Cliente não encontrado" });
     }
 
     const { saldo, limite } = clientResult.rows[0];
 
-    const transacoesQuery = `SELECT valor, tipo, descricao, realizado_em FROM transacoes WHERE cliente_id = $1 ORDER BY realizado_em DESC LIMIT 10;`;
-    const transacoesResult = await pool.query(transacoesQuery, [client_id]);
+    const transacoesQuery = `SELECT valor, tipo, descricao, realizado_em FROM transacoes WHERE cliente_id = $1 ORDER BY realizado_em DESC LIMIT 10 FOR UPDATE;`;
+    const transacoesResult = await client.query(transacoesQuery, [client_id]);
 
     const ultimasTransacoes = transacoesResult.rows.map((t) => ({
       valor: t.valor,
@@ -139,11 +145,13 @@ app.get("/clientes/:client_id/extrato", async (request, reply) => {
       },
       ultimas_transacoes: ultimasTransacoes,
     };
-
+    // await client.query("COMMIT");
     return reply.send(resultado);
   } catch (error) {
+    // await client.query("ROLLBACK");
     return reply.code(500).send({ detail: "Internal Server Error" });
   } finally {
+    client.release();
   }
 });
 

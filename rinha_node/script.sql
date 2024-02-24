@@ -24,6 +24,10 @@ CREATE TABLE IF NOT EXISTS transacoes (
     FOREIGN KEY (cliente_id) REFERENCES clientes(id)
 );
 
+-- Índices para otimizar a performance
+CREATE INDEX idx_transacoes_cliente_id ON transacoes(cliente_id);
+-- Considerar índices adicionais com base em colunas frequentemente consultadas
+
 INSERT INTO clientes (id, limite, saldo) VALUES
 (1, 100000, 0),
 (2, 80000, 0),
