@@ -111,7 +111,7 @@ app.get("/clientes/:client_id/extrato", async (request, reply) => {
 
       const { saldo, limite } = clientResult.rows[0];
 
-      const transacoesQuery = `SELECT valor, tipo, descricao, realizado_em FROM transacoes WHERE cliente_id = $1 ORDER BY realizado_em DESC LIMIT 10;`;
+      const transacoesQuery = `SELECT valor, tipo, descricao, realizado_em FROM transacoes WHERE cliente_id = $1 ORDER BY realizado_em DESC LIMIT 10 FOR UPDATE;`;
       const transacoesResult = await client.query(transacoesQuery, [client_id]);
 
       const ultimasTransacoes = transacoesResult.rows.map((t) => ({
